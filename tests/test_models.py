@@ -70,6 +70,21 @@ class Profile(Base):
     user = relationship("User", back_populates="profile")
 
 
+class Parent(Base):
+    __tablename__ = "parent_table"
+
+    id = Column(Integer, primary_key=True)
+    children = relationship("Child", back_populates="parent")
+
+
+class Child(Base):
+    __tablename__ = "child_table"
+
+    id = Column(Integer, primary_key=True)
+    parent_id = Column(ForeignKey("parent_table.id"))
+    parent = relationship("Parent", back_populates="children")
+
+
 @pytest.fixture(autouse=True)
 def prepare_database() -> Generator[None, None, None]:
     Base.metadata.create_all(engine)
@@ -178,8 +193,7 @@ async def test_column_formatters_detail() -> None:
 
 
 async def test_column_formatters_default() -> None:
-    class ProfileAdmin(ModelView, model=Profile):
-        ...
+    class ProfileAdmin(ModelView, model=Profile): ...
 
     user = User(id=1, name="Long Name")
     profile = Profile(user=user, is_active=True)
@@ -342,8 +356,7 @@ def test_get_python_type_postgresql() -> None:
 
 
 def test_model_default_sort() -> None:
-    class UserAdmin(ModelView, model=User):
-        ...
+    class UserAdmin(ModelView, model=User): ...
 
     assert UserAdmin()._get_default_sort() == [("id", False)]
 
@@ -398,7 +411,8 @@ async def test_edit_form_query() -> None:
 
         def edit_form_query(self, request: Request) -> Select:
             return (
-                select(self.model)
+                super()
+                .edit_form_query(request)
                 .join(Address)
                 .options(contains_eager(User.addresses))
                 .filter(Address.name == "bat cave")
@@ -414,6 +428,43 @@ async def test_edit_form_query() -> None:
     user_obj = await view.get_object_for_edit(request_object)
 
     assert len(user_obj.addresses) == 1
+
+
+async def test_form_query_2() -> None:
+    session = session_maker()
+    parent_1 = Parent()
+    parent_2 = Parent()
+    child_1 = Child(parent=parent_1)
+    child_2 = Child(parent=parent_1)
+    child_3 = Child(parent=parent_1)
+    child_4 = Child(parent=parent_2)
+    child_5 = Child(parent=parent_2)
+
+    session.add_all([parent_1, parent_2, child_1, child_2, child_3, child_4, child_5])
+    session.commit()
+
+    class ParentAdmin(ModelView, model=Parent):
+        async_engine = False
+        session_maker = session_maker
+
+        def form_query(self, request: Request) -> Select:
+            parent_id = request.path_params["pk"]
+            return (
+                super()
+                .edit_form_query(request)
+                .join(Child)
+                .options(contains_eager(Parent.children))
+                .filter(Child.parent_id == parent_id)
+            )
+
+    view = ParentAdmin()
+    parent_1_request = Request({"type": "http", "path_params": {"pk": parent_1.id}})
+    parent_2_request = Request({"type": "http", "path_params": {"pk": parent_2.id}})
+    parent_1_instance = await view.get_object_for_edit(parent_1_request)
+    parent_2_instance = await view.get_object_for_edit(parent_2_request)
+
+    assert len(parent_1_instance.children) == 3
+    assert len(parent_2_instance.children) == 2
 
 
 def test_model_columns_all_keyword() -> None:
@@ -453,8 +504,7 @@ async def test_model_property_in_columns() -> None:
 
 
 def test_sort_query() -> None:
-    class AddressAdmin(ModelView, model=Address):
-        ...
+    class AddressAdmin(ModelView, model=Address): ...
 
     query = select(Address)
 
