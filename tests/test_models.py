@@ -410,9 +410,9 @@ async def test_edit_form_query() -> None:
         session_maker = session_maker
 
         def edit_form_query(self, request: Request) -> Select:
+            parent_id = request.path_params["pk"]
             return (
-                super()
-                .edit_form_query(request)
+                self._stmt_by_identifier(parent_id)
                 .join(Address)
                 .options(contains_eager(User.addresses))
                 .filter(Address.name == "bat cave")
